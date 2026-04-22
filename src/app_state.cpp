@@ -39,7 +39,7 @@ void appBootSafeDefaults() {
         initSensorPoint(g_app.sensors.pressureBar[i]);
     }
     g_app.machineState = MACH_BOOT;
-    g_app.systemMode = MODE_COMMISSIONING;
+    g_app.systemMode = MODE_MAINTENANCE;
     g_app.anyRunning = false;
     xSemaphoreGive(sharedMutex);
 }

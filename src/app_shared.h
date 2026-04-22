@@ -21,9 +21,11 @@ enum machine_state_t : uint8_t {
     MACH_FAULT_LATCHED
 };
 
-enum system_mode_t : uint8_t {
-    MODE_COMMISSIONING = 0,
-    MODE_PRODUCTION = 1
+enum system_mode_t
+{
+    MODE_PRODUCTION = 0,
+    MODE_MAINTENANCE = 1,
+    MODE_SIMULATION = 2
 };
 
 enum fault_scope_t : uint8_t {

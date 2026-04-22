@@ -44,6 +44,21 @@ static void stopSlotUnsafe(uint8_t slot, job_state_t finalState) {
     actuatorRequestSlot(slot, false);
 }
 
+static const char *modeToStr(system_mode_t mode)
+{
+    switch (mode)
+    {
+    case MODE_PRODUCTION:
+        return "production";
+    case MODE_MAINTENANCE:
+        return "maintenance";
+    case MODE_SIMULATION:
+        return "simulation";
+    default:
+        return "unknown";
+    }
+}
+
 void stateMachineTask(void* pvParameters) {
     (void)pvParameters;
     event_t evt{};
@@ -85,9 +100,21 @@ void stateMachineTask(void* pvParameters) {
                 break;
 
             case EVT_CMD_SET_MODE:
-                if (!g_app.anyRunning && !fault_is_active()) {
+                if (!g_app.anyRunning && !fault_is_active())
+                {
                     g_app.systemMode = evt.requestedMode;
-                    LOGI("FSM", "mode=%s", evt.requestedMode == MODE_PRODUCTION ? "production" : "commissioning");
+                    LOGI("FSM", "mode=%s", modeToStr(evt.requestedMode));
+
+                    if (evt.requestedMode == MODE_SIMULATION)
+                    {
+                        LOGW("FSM", "simulation mode active");
+                    }
+                }
+                else
+                {
+                    LOGW("FSM", "set_mode rejected anyRunning=%u fault=%u",
+                         g_app.anyRunning ? 1 : 0,
+                         fault_is_active() ? 1 : 0);
                 }
                 break;
 

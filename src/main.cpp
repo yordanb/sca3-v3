@@ -38,6 +38,62 @@ static uint8_t g_stuckStreak[SLOT_COUNT] = {0, 0, 0, 0};
 static float g_lastTcTemp[SLOT_COUNT] = {NAN, NAN, NAN, NAN};
 static float g_lastCjTemp[SLOT_COUNT] = {NAN, NAN, NAN, NAN};
 
+// Simulation values (used in simulation mode or as fallback if sensors are missing)
+static float g_simTemp[SLOT_COUNT] = {25.0f, 25.0f, 25.0f, 25.0f};
+static float g_simCurrent[SLOT_COUNT] = {0.0f, 0.0f, 0.0f, 0.0f};
+static float g_simPressure[SLOT_COUNT] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+static void updateSimulatedSensors()
+{
+    MachineSnapshot snap{};
+    bool haveSnap = appGetSnapshot(&snap, pdMS_TO_TICKS(20));
+
+    for (uint8_t i = 0; i < SLOT_COUNT; ++i)
+    {
+        bool heaterOn = false;
+        if (haveSnap)
+        {
+            heaterOn = snap.actuator.actualSSR[i] || snap.actuator.desiredSSR[i];
+        }
+
+        if (heaterOn)
+        {
+            g_simTemp[i] += 0.15f;
+            if (g_simTemp[i] > 180.0f)
+                g_simTemp[i] = 180.0f;
+            g_simCurrent[i] = 1.2f;
+        }
+        else
+        {
+            g_simTemp[i] -= 0.05f;
+            if (g_simTemp[i] < 26.0f)
+                g_simTemp[i] = 26.0f;
+            g_simCurrent[i] = 0.05f;
+        }
+
+        g_simPressure[i] = 1.0f;
+
+        appMarkTemp(i, g_simTemp[i], true, 0);
+        appMarkCurrent(i, g_simCurrent[i], true, 0);
+        appMarkPressure(i, g_simPressure[i], true, 0);
+    }
+}
+
+static const char *modeToStr(system_mode_t mode)
+{
+    switch (mode)
+    {
+    case MODE_PRODUCTION:
+        return "production";
+    case MODE_MAINTENANCE:
+        return "maintenance";
+    case MODE_SIMULATION:
+        return "simulation";
+    default:
+        return "unknown";
+    }
+}
+
 static float adsToVoltage(int16_t raw)
 {
     return raw * ADS_LSB_V;
@@ -317,10 +373,13 @@ static void setupWiFi()
     }
 }
 
-static void publishJson(const char *topic, JsonDocument &doc)
+static bool publishJson(const char *topic, JsonDocument &doc)
 {
     if (!mqttClient.connected())
-        return;
+    {
+        LOGW("MQTT", "publish skipped not connected topic=%s", topic);
+        return false;
+    }
 
     char buf[1024];
     size_t needed = measureJson(doc);
@@ -330,11 +389,18 @@ static void publishJson(const char *topic, JsonDocument &doc)
         LOGW("MQTT", "json too large topic=%s needed=%u",
              topic,
              static_cast<unsigned>(needed));
-        return;
+        return false;
     }
 
     size_t n = serializeJson(doc, buf, sizeof(buf));
-    mqttClient.publish(topic, buf, n);
+    bool ok = mqttClient.publish(topic, buf, n);
+
+    LOGI("MQTT", "publish topic=%s len=%u ok=%u",
+         topic,
+         static_cast<unsigned>(n),
+         ok ? 1 : 0);
+
+    return ok;
 }
 
 static void publishHeartbeat()
@@ -346,7 +412,8 @@ static void publishHeartbeat()
     JsonDocument doc;
     doc["esp_id"] = g_cfg.mqttClientId;
     doc["machine_state"] = static_cast<uint8_t>(snap.machineState);
-    doc["mode"] = snap.systemMode == MODE_PRODUCTION ? "production" : "commissioning";
+    doc["mode"] = modeToStr(snap.systemMode);
+    doc["simulated"] = (snap.systemMode == MODE_SIMULATION);
     doc["anyRunning"] = snap.anyRunning;
     doc["uptime_ms"] = millis();
     doc["freeHeap"] = esp_get_free_heap_size();
@@ -363,6 +430,9 @@ static void publishTelemetry()
     JsonDocument doc;
     doc["esp_id"] = g_cfg.mqttClientId;
     doc["machine_state"] = static_cast<uint8_t>(snap.machineState);
+    doc["mode"] = modeToStr(snap.systemMode);
+    doc["simulated"] = (snap.systemMode == MODE_SIMULATION);
+    doc["anyRunning"] = snap.anyRunning;
 
     JsonArray temps = doc["tempC"].to<JsonArray>();
     JsonArray tempValid = doc["temp_valid"].to<JsonArray>();
@@ -377,33 +447,21 @@ static void publishTelemetry()
     for (uint8_t i = 0; i < SLOT_COUNT; ++i)
     {
         if (snap.sensors.tempC[i].valid)
-        {
-            temps.add(snap.sensors.tempC[i].value);
-        }
+            temps.add(roundf(snap.sensors.tempC[i].value * 10.0f) / 10.0f);
         else
-        {
             temps.add(nullptr);
-        }
         tempValid.add(snap.sensors.tempC[i].valid);
 
         if (snap.sensors.currentA[i].valid)
-        {
-            currents.add(snap.sensors.currentA[i].value);
-        }
+            currents.add(roundf(snap.sensors.currentA[i].value * 100.0f) / 100.0f);
         else
-        {
             currents.add(nullptr);
-        }
         currentValid.add(snap.sensors.currentA[i].valid);
 
         if (snap.sensors.pressureBar[i].valid)
-        {
-            pressures.add(snap.sensors.pressureBar[i].value);
-        }
+            pressures.add(roundf(snap.sensors.pressureBar[i].value * 100.0f) / 100.0f);
         else
-        {
             pressures.add(nullptr);
-        }
         pressureValid.add(snap.sensors.pressureBar[i].valid);
 
         desired.add(snap.actuator.desiredSSR[i]);
@@ -448,6 +506,10 @@ static void mqttReconnectIfNeeded()
 
     if (mqttClient.connected())
         return;
+
+    LOGI("MQTT", "connecting host=%s port=%u",
+         g_cfg.mqttHost,
+         static_cast<unsigned>(g_cfg.mqttPort));
 
     if (mqttClient.connect(g_cfg.mqttClientId, g_cfg.mqttUser, g_cfg.mqttPass))
     {
@@ -548,7 +610,24 @@ static void mqttCallback(char *topic, byte *payload, unsigned int length)
         }
 
         evt.type = EVT_CMD_SET_MODE;
-        evt.requestedMode = !strcmp(mode, "production") ? MODE_PRODUCTION : MODE_COMMISSIONING;
+
+        if (!strcmp(mode, "production"))
+        {
+            evt.requestedMode = MODE_PRODUCTION;
+        }
+        else if (!strcmp(mode, "maintenance"))
+        {
+            evt.requestedMode = MODE_MAINTENANCE;
+        }
+        else if (!strcmp(mode, "simulation"))
+        {
+            evt.requestedMode = MODE_SIMULATION;
+        }
+        else
+        {
+            publishCmdAck(cmd, false, "invalid_mode");
+            return;
+        }
 
         bool ok = enqueueCommand(evt);
         publishCmdAck(cmd, ok, ok ? "queued" : "queue_full");
@@ -602,6 +681,25 @@ static void core1SensorTask(void *pvParameters)
 
     for (;;)
     {
+        MachineSnapshot snap{};
+        bool haveSnap = appGetSnapshot(&snap, pdMS_TO_TICKS(20));
+        bool simMode = haveSnap && (snap.systemMode == MODE_SIMULATION);
+
+        if (simMode)
+        {
+            updateSimulatedSensors();
+
+            tcDbgDiv++;
+            if (tcDbgDiv >= 10)
+            {
+                tcDbgDiv = 0;
+                LOGD("SENSOR", "simulation sensors updated");
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)))
         {
             if (g_adsACSReady)
@@ -805,6 +903,8 @@ static void telemetryAndControlTask(void *pvParameters)
     uint32_t lastHeartbeatMs = 0;
     uint32_t lastWifiRetryMs = 0;
     uint32_t lastSensorSummaryMs = 0;
+    uint32_t lastMqttRetryMs = 0;
+    uint32_t lastGateLogMs = 0;
     bool lastFaultPublished = false;
 
     for (;;)
@@ -817,20 +917,40 @@ static void telemetryAndControlTask(void *pvParameters)
             setupWiFi();
         }
 
-        mqttReconnectIfNeeded();
+        if (WiFi.status() == WL_CONNECTED && now - lastMqttRetryMs >= 5000)
+        {
+            lastMqttRetryMs = now;
+            mqttReconnectIfNeeded();
+        }
+
         mqttClient.loop();
 
         MachineSnapshot snap{};
         if (appGetSnapshot(&snap, pdMS_TO_TICKS(20)))
         {
+            if (now - lastGateLogMs >= 2000)
+            {
+                lastGateLogMs = now;
+                LOGI("MQTT", "telemetry gate anyRunning=%u mode=%s machineState=%u",
+                     snap.anyRunning ? 1 : 0,
+                     modeToStr(snap.systemMode),
+                     static_cast<unsigned>(snap.machineState));
+            }
+
             if (snap.anyRunning && now - lastTelemetryMs >= g_cfg.telemetryIntervalRunningMs)
             {
+                LOGI("MQTT", "telemetry trigger anyRunning=%u mode=%s",
+                     snap.anyRunning ? 1 : 0,
+                     modeToStr(snap.systemMode));
                 publishTelemetry();
                 lastTelemetryMs = now;
             }
 
             if (!snap.anyRunning && now - lastHeartbeatMs >= g_cfg.heartbeatIntervalIdleMs)
             {
+                LOGI("MQTT", "heartbeat trigger anyRunning=%u mode=%s",
+                     snap.anyRunning ? 1 : 0,
+                     modeToStr(snap.systemMode));
                 publishHeartbeat();
                 lastHeartbeatMs = now;
             }
@@ -966,9 +1086,19 @@ void setup()
 
     mqttClient.setServer(g_cfg.mqttHost, g_cfg.mqttPort);
     mqttClient.setCallback(mqttCallback);
+    mqttClient.setSocketTimeout(2);
+    mqttClient.setBufferSize(1024);
+
     LOGI("BOOT", "mqtt configured host=%s port=%u",
          g_cfg.mqttHost,
          static_cast<unsigned>(g_cfg.mqttPort));
+    LOGI("BOOT", "mqtt buffer size=%u", 1024U);
+    
+    LOGI("BOOT", "topics control=%s telemetry=%s status=%s event=%s",
+         g_cfg.topicControl,
+         g_cfg.topicTelemetry,
+         g_cfg.topicStatus,
+         g_cfg.topicEvent);
 
     logNetworkSummary("BOOT");
 
@@ -982,8 +1112,8 @@ void setup()
     faultRestoreFromNVS();
     LOGI("BOOT", "fault restore checked");
 
-    //setupWiFi();
-    //logNetworkSummary("BOOT");
+    // setupWiFi();
+    // logNetworkSummary("BOOT");
     LOGI("BOOT", "startup complete");
 }
 

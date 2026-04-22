@@ -2,6 +2,9 @@
 
 #include <Arduino.h>
 
+// ================= Slot Count =================
+static constexpr uint8_t SLOT_COUNT = 4;
+
 // ================= I2C =================
 static constexpr uint8_t I2C_SDA = 21;
 static constexpr uint8_t I2C_SCL = 22;
@@ -12,27 +15,28 @@ static constexpr uint8_t SPI_MISO = 19;
 static constexpr uint8_t SPI_MOSI = 23;
 
 // ================= MAX31856 CS =================
-static constexpr uint8_t MAX31856_CS[4] = {5, 17, 16, 4};
+static constexpr uint8_t MAX31856_CS[SLOT_COUNT] = {5, 17, 16, 4};
 
 // ================= ADS1115 =================
 static constexpr uint8_t ADS_ADDR_ACS = 0x48;
 static constexpr uint8_t ADS_ADDR_PRES = 0x49;
 
-static constexpr uint8_t SLOT_COUNT = 4;
+// ================= Runtime Config =================
+struct AppConfig
+{
+    const char *wifiSsid;
+    const char *wifiPass;
 
-struct AppConfig {
-    const char* wifiSsid;
-    const char* wifiPass;
-    const char* mqttHost;
+    const char *mqttHost;
     uint16_t mqttPort;
-    const char* mqttClientId;
-    const char* mqttUser;
-    const char* mqttPass;
+    const char *mqttClientId;
+    const char *mqttUser;
+    const char *mqttPass;
 
-    const char* topicTelemetry;
-    const char* topicControl;
-    const char* topicStatus;
-    const char* topicEvent;
+    const char *topicTelemetry;
+    const char *topicControl;
+    const char *topicStatus;
+    const char *topicEvent;
 
     float maxTempC;
     float maxCurrentA;
@@ -49,11 +53,10 @@ struct AppConfig {
 
 extern const AppConfig g_cfg;
 
+// ================= Hardware Output Pins =================
 extern const uint8_t SSR_PINS[SLOT_COUNT];
-extern const uint8_t MAX31856_CS[SLOT_COUNT];
-extern const uint8_t ADS_ADDR_ACS;
-extern const uint8_t ADS_ADDR_PRES;
 
+// ================= Analog Conversion Constants =================
 extern const float ADS_LSB_V;
 extern const float ADC_VREF;
 extern const float ACS_SENSITIVITY_V_PER_A;
