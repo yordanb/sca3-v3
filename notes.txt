@@ -1,0 +1,2 @@
+Lokasi project :
+D:\PlatformIO\sca3_v2_refactor_gpt\2_refactor_blueprint_with_logger
