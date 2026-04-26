@@ -1,385 +1,45 @@
-# Smart Curing Assistance V3 (ESP32)
+Readme yang digenerate lengkap pertama kali oleh ChatGPT.
 
-Firmware berbasis **ESP32** untuk sistem **multi-slot curing/heating control** dengan kontrol SSR, sensor thermocouple, monitoring arus & tekanan, serta integrasi MQTT untuk HMI/dashboard.
+# Smart Curing Controller (ESP32)
 
----
+Firmware berbasis **ESP32** untuk sistem **multi-slot heating / curing control** dengan monitoring sensor real-time, fault handling, persistent fault storage, dan integrasi MQTT.
 
-## 🔥 Highlights
-
-* 4-slot heater control (SSR)
-* Thermocouple MAX31856 per slot
-* Current & pressure via ADS1115
-* MQTT control / telemetry / status / event
-* FreeRTOS multi-task architecture
-* Persistent fault (NVS)
-* Simulation mode (tanpa hardware)
-* Runtime sensor validation (anti false-positive)
+Project ini ditujukan untuk kebutuhan kontrol proses yang membutuhkan:
+- kontrol heater per slot
+- pembacaan temperatur berbasis thermocouple
+- monitoring arus dan tekanan
+- fault handling yang fail-safe
+- integrasi ke HMI / dashboard / broker MQTT
 
 ---
 
-## 🚀 Project Status
+## Highlights
 
-✅ **Stabil untuk:**
-
-* Simulation testing
-* MQTT integration
-* HMI/dashboard
-
-⚠️ **Perlu validasi:**
-
-* Wiring sensor real
-* Kalibrasi sensor
-* Uji fault di kondisi nyata
-
----
-
-## 🧠 Operating Modes
-
-| Mode        | Deskripsi                           |
-| ----------- | ----------------------------------- |
-| production  | Operasi normal (hardware aktif)     |
-| maintenance | Idle / debug                        |
-| simulation  | Semua sensor & output disimulasikan |
+- **4-slot heater control**
+- **Thermocouple MAX31856** per slot
+- **Current sensing** via ADS1115
+- **Pressure sensing** via ADS1115
+- **MQTT command / telemetry / event**
+- **FreeRTOS task-based architecture**
+- **Persistent fault storage (NVS)**
+- **Structured logging (`LOGE`, `LOGW`, `LOGI`, `LOGD`)**
+- **Runtime sensor validation**
+- **Fail-safe behavior for invalid sensors**
 
 ---
 
-## 🏗️ Architecture
-
-### Task Layout
-
-Core 0:
-
-* Actuator Task
-* State Machine Task
-* Safety Task
-* Timer Task
-* MQTT Task
-
-Core 1:
-
-* Sensor Task
-
----
-
-## 🔌 MQTT Interface (FINAL)
-
-### Topics
-
-| Fungsi          | Topic                           |
-| --------------- | ------------------------------- |
-| Control (SUB)   | `/aira/sca3/{esp_id}/control`   |
-| Telemetry (PUB) | `/aira/sca3/{esp_id}/telemetry` |
-| Status (PUB)    | `/aira/sca3/{esp_id}/status`    |
-| Event (PUB)     | `/aira/sca3/{esp_id}/event`     |
-
-Contoh:
-
-```
-/aira/sca3/esp32_001/control
-```
-
----
-
-## 📥 CONTROL PAYLOAD
-
-### Start
-
-```json
-{
-  "cmd": "start",
-  "slot": 3,
-  "duration_s": 120
-}
-```
-
-### Stop
-
-```json
-{
-  "cmd": "stop",
-  "slot": 3
-}
-```
-
-### Set Mode
-
-```json
-{
-  "cmd": "set_mode",
-  "mode": "simulation"
-}
-```
-
-Valid mode:
-
-* production
-* maintenance
-* simulation
-
----
-
-### Reset Fault
-
-```json
-{
-  "cmd": "reset_fault"
-}
-```
-
----
-
-### Calibrate Zero
-
-```json
-{
-  "cmd": "calibrate_zero",
-  "slot": 1,
-  "offset_mV": 12.5
-}
-```
-
----
-
-## 📤 EVENT PAYLOAD
-
-### Command ACK
-
-```json
-{
-  "evt": "cmd_ack",
-  "cmd": "start",
-  "accepted": true,
-  "reason": "queued",
-  "slot": 3,
-  "esp_id": "esp32_sca_v3_001"
-}
-```
-
----
-
-### Fault Event
-
-```json
-{
-  "evt": "fault",
-  "esp_id": "esp32_sca_v3_001",
-  "code": 3,
-  "scope": 0,
-  "slot": 3,
-  "source": "SafetyTask",
-  "timestamp_ms": 12345678
-}
-```
-
----
-
-## 📡 STATUS PAYLOAD
-
-```json
-{
-  "esp_id": "esp32_sca_v3_001",
-  "machine_state": 1,
-  "mode": "simulation",
-  "simulated": true,
-  "anyRunning": false,
-  "uptime_ms": 123456,
-  "freeHeap": 150000
-}
-```
-
----
-
-## 📊 TELEMETRY PAYLOAD (FINAL)
-
-```json
-{
-  "esp_id": "esp32_sca_v3_001",
-  "machine_state": 2,
-  "mode": "simulation",
-  "simulated": true,
-  "anyRunning": true,
-
-  "tempC": [26, 26, 26, 37.4],
-  "temp_valid": [true, true, true, true],
-
-  "currentA": [0.05, 0.05, 0.05, 1.2],
-  "current_valid": [true, true, true, true],
-
-  "pressureBar": [1, 1, 1, 1],
-  "pressure_valid": [true, true, true, true],
-
-  "ssr_desired": [false, false, false, true],
-  "ssr_actual": [false, false, false, true],
-
-  "remaining_ms": [0, 0, 0, 604800]
-}
-```
-
----
-
-## ⚠️ TELEMETRY BEHAVIOR
-
-Telemetry **tidak selalu dikirim**.
-
-### Publish hanya jika:
-
-* `anyRunning == true`
-* atau ada trigger event (start/stop)
-
-### Indikasi log:
-
-```
-telemetry gate anyRunning=0 → tidak publish
-telemetry trigger anyRunning=1 → publish
-```
-
----
-
-## 🧪 SIMULATION MODE
-
-Jika:
-
-```
-mode = simulation
-```
-
-Maka:
-
-* SSR tidak mengaktifkan hardware
-* Sensor disimulasikan:
-
-  * suhu naik saat heater ON
-  * current simulasi
-  * pressure konstan
-
-Contoh log:
-
-```
-simulation mode active
-simulation mode slot=3 on=1 (physical output skipped)
-```
-
----
-
-## 🛡️ FAULT SYSTEM
-
-* Latched (tidak auto-clear)
-* Disimpan di NVS
-* Harus reset manual
-
-Reset:
-
-```json
-{
-  "cmd": "reset_fault"
-}
-```
-
----
-
-## 🧠 SENSOR VALIDATION
-
-Thermocouple valid jika:
-
-* tidak fault
-* tidak NaN
-* dalam range
-* tidak stuck
-* tidak zero terus menerus
-
----
-
-## 🧪 TESTING
-
-### Simulation Test
-
-1. set mode:
-
-```json
-{"cmd":"set_mode","mode":"simulation"}
-```
-
-2. start:
-
-```json
-{"cmd":"start","slot":3,"duration_s":120}
-```
-
-3. cek telemetry & kenaikan suhu
-
----
-
-## 🧱 Build
-
-```bash
-pio run
-pio run --target upload
-pio device monitor
-```
-
----
-
-## 📁 Structure
-
-```
-src/
-├── main.cpp
-├── actuatorTask.cpp
-├── stateMachineTask.cpp
-├── safetyTask.cpp
-├── sensorTask.cpp
-├── mqttTask.cpp
-├── fault.cpp
-└── logger.cpp
-```
-
----
-
-## ⚠️ Known Limitations
-
-* MAX31856 tidak reliable untuk presence detect
-* validasi sensor berbasis heuristik runtime
-* MQTT belum menggunakan auth/TLS
-
----
-
-## 🔐 Production Recommendation
-
-* MQTT authentication
-* TLS encryption
-* request_id pada command
-* watchdog supervision
-
----
-
-## 👨‍💻 Maintainer
-
-Smart Curing Assistance V3
-ESP32 Industrial Controller Platform
-
-
-## 🚀 Project Status
-
-✅ **READY FOR:**
-- HMI integration
-- MQTT dashboard
-- Simulation testing
-- Logic validation tanpa hardware
-
-⚠️ **NEXT STEP:**
-- Validasi hardware sensor real
-- Kalibrasi sensor
-- Production hardening
-
----
-
-## 🧠 Operating Modes
-
-| Mode | Deskripsi |
-|------|----------|
-| production | Operasi normal (hardware aktif) |
-| maintenance | Idle / debug mode |
-| simulation | Semua sensor & actuator disimulasikan |
+## Project Status
+
+Project ini sudah memiliki fondasi yang kuat untuk:
+- prototyping
+- pilot deployment
+- integrasi dashboard / broker
+
+Beberapa area yang masih penting untuk validasi lapangan:
+- tuning sensor validation untuk semua channel thermocouple
+- verifikasi wiring fisik per slot
+- pengujian fault path pada kondisi proses nyata
+- hardening command/API untuk deployment multi-device
 
 ---
 
